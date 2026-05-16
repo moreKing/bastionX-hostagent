@@ -20,54 +20,88 @@ type ContainerInfo struct {
 	ImageTag   string  `json:"imageTag"`
 	State      string  `json:"state"`
 	CPUPercent float64 `json:"cpuPercent"`
-	MemDisplay string  `json:"memDisplay"`
-	Order      int     `json:"order"`
+	// MemDisplay string  `json:"memDisplay"`
+	MemoryUsed  uint64 `json:"memoryUsed"`
+	MemoryTotal uint64 `json:"memoryTotal"`
+	Order       int    `json:"order"`
 }
 
 type ContainerInfoResponse struct {
-	DockerVersion  string          `json:"dockerVersion"`
-	ComposeVersion string          `json:"composeVersion"`
-	Containers     []ContainerInfo `json:"containers"`
+	DockerVersion  string           `json:"dockerVersion"`
+	ComposeVersion string           `json:"composeVersion"`
+	Running        bool             `json:"running"` // false 表示未运行
+	Error          string           `json:"error"`   // 未运行错误
+	Containers     *[]ContainerInfo `json:"containers"`
 }
 
-var containerInfoCache *[]ContainerInfo
+var containerInfoCache = &ContainerInfoResponse{
+	DockerVersion:  "",
+	ComposeVersion: "",
+	Running:        false,
+	Error:          "未初始化",
+	Containers:     nil,
+}
 
-func GetDockerContainerInfo() {
+func UpdateDockerContainerInfo() {
 	ctx := context.Background()
+
+	var cifq = &ContainerInfoResponse{
+		Running:        false,
+		Error:          "未初始化",
+		DockerVersion:  "",
+		ComposeVersion: "",
+	}
+
+	defer func() {
+		containerInfoCache = cifq
+	}()
 
 	// cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
+		cifq.Error = fmt.Sprintf("无法创建 Docker 客户端: %v", err)
 		logger.Error("无法创建 Docker 客户端", err)
+		return
 	}
 	defer cli.Close()
 
 	// 获取 Docker 版本信息
 	dockerVersion, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
+		cifq.Error = fmt.Sprintf("无法获取 Docker 版本信息: %v", err)
 		logger.Error("无法获取 Docker 版本信息", err)
+		return
 	}
+	cifq.DockerVersion = dockerVersion.Version
 
 	logger.Debug("Docker 版本: ", dockerVersion.Version)
 
 	// 获取 Docker Compose 版本信息
 	composeVersion, err := getDockerComposeVersion()
 	if err != nil {
+		cifq.Error = fmt.Sprintf("无法获取 Docker Compose 版本信息: %v", err)
 		logger.Warn("无法获取 Docker Compose 版本信息: ", err)
 	}
+	cifq.ComposeVersion = composeVersion
 
 	logger.Debug("Docker Compose 版本: ", composeVersion)
 
 	result, err := cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
+		cifq.Error = fmt.Sprintf("无法列出容器: %v", err)
 		logger.Error("无法列出容器", err)
+		return
 	}
 
 	totalContainers := len(result.Items)
 	if totalContainers == 0 {
+		cifq.Error = "没有找到任何容器。"
 		logger.Warn("没有找到任何容器。")
 		return
 	}
+
+	cifq.Running = true
+	cifq.Error = ""
 
 	ch := make(chan ContainerInfo, totalContainers)
 	var wg sync.WaitGroup
@@ -85,17 +119,20 @@ func GetDockerContainerInfo() {
 			ImageTag:   imageTag,
 			State:      string(c.State),
 			CPUPercent: 0.0,
-			MemDisplay: "0.00 B / 0.00 B",
-			Order:      i,
+			// MemDisplay: "0.00 B / 0.00 B",
+			Order:       i,
+			MemoryUsed:  0,
+			MemoryTotal: 0,
 		}
 
 		if info.State == "running" {
 			wg.Add(1)
 			go func(cid string, baseInfo ContainerInfo) {
 				defer wg.Done()
-				cpu, mem := getPreciseContainerStats(ctx, cli, cid)
+				cpu, memUsed, memTotal := getPreciseContainerStats(ctx, cli, cid)
 				baseInfo.CPUPercent = cpu
-				baseInfo.MemDisplay = mem
+				baseInfo.MemoryUsed = memUsed
+				baseInfo.MemoryTotal = memTotal
 				ch <- baseInfo
 			}(c.ID, info)
 		} else {
@@ -113,12 +150,11 @@ func GetDockerContainerInfo() {
 		collected[info.Order] = info
 	}
 
-	logger.Info(fmt.Sprintf("%-20s %-25s %-10s %-10s %-10s %-25s\n", "容器名称", "镜像名称", "版本", "状态", "CPU%", "内存占用 (实际/限额)"))
-	logger.Info(strings.Repeat("-", 105))
+	cifq.Containers = &collected
 
 	for _, info := range collected {
-		logger.Info(fmt.Sprintf("%-20s %-25s %-10s %-10s %-10.2f %-25s\n",
-			info.Name, info.ImageName, info.ImageTag, info.State, info.CPUPercent, info.MemDisplay))
+		logger.Info(fmt.Sprintf("容器：%s  镜像： %s 版本： %s  状态： %s CPU使用率：%.2f 内存占用：%s\n",
+			info.Name, info.ImageName, info.ImageTag, info.State, info.CPUPercent, fmt.Sprintf("%s / %s", formatBytes(info.MemoryUsed), formatBytes(info.MemoryTotal))))
 	}
 }
 
@@ -134,10 +170,10 @@ func parseImageString(imageStr string) (string, string) {
 	return imageStr, "latest"
 }
 
-func getPreciseContainerStats(ctx context.Context, cli *client.Client, containerID string) (float64, string) {
+func getPreciseContainerStats(ctx context.Context, cli *client.Client, containerID string) (float64, uint64, uint64) {
 	stats, err := cli.ContainerStats(ctx, containerID, client.ContainerStatsOptions{Stream: true})
 	if err != nil {
-		return 0, "0.00 B / 0.00 B"
+		return 0, 0, 0
 	}
 	defer stats.Body.Close()
 
@@ -147,7 +183,7 @@ func getPreciseContainerStats(ctx context.Context, cli *client.Client, container
 
 	// 读取第一帧
 	if err := decoder.Decode(&firstSample); err != nil {
-		return 0, "0.00 B / 0.00 B"
+		return 0, 0, 0
 	}
 	// 读取第二帧（此步会天然阻塞 1 秒，让 CPU 产生可算的数据差）
 	if err := decoder.Decode(&secondSample); err != nil {
@@ -158,7 +194,7 @@ func getPreciseContainerStats(ctx context.Context, cli *client.Client, container
 	return calculateStats(&secondSample, &firstSample)
 }
 
-func calculateStats(current, previous *container.StatsResponse) (float64, string) {
+func calculateStats(current, previous *container.StatsResponse) (float64, uint64, uint64) {
 	// --- 内存占用计算 ---
 	memUsage := current.MemoryStats.Usage
 	if cache, ok := current.MemoryStats.Stats["inactive_file"]; ok {
@@ -171,7 +207,6 @@ func calculateStats(current, previous *container.StatsResponse) (float64, string
 		}
 	}
 	memLimit := current.MemoryStats.Limit
-	memDisplay := fmt.Sprintf("%s / %s", formatBytes(memUsage), formatBytes(memLimit))
 
 	// --- 核心修复：CPU 动态率计算 ---
 	cpuPercent := 0.0
@@ -191,7 +226,7 @@ func calculateStats(current, previous *container.StatsResponse) (float64, string
 		cpuPercent = (cpuDelta / systemDelta) * onlineCPUs * 100.0
 	}
 
-	return cpuPercent, memDisplay
+	return cpuPercent, memUsage, memLimit
 }
 
 func formatBytes(bytes uint64) string {
@@ -232,4 +267,8 @@ func getDockerComposeVersion() (string, error) {
 	}
 
 	return result, nil
+}
+
+func GetDockerContainerInfo() *ContainerInfoResponse {
+	return containerInfoCache
 }

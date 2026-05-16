@@ -14,6 +14,8 @@ type SystemAllTrendsResponse struct {
 	System *SystemInfo `json:"system"`
 
 	Timestamp int64 `json:"timestamp"`
+
+	Application *ContainerInfoResponse `json:"application"`
 }
 
 func GetSystemAllTrends() (*SystemAllTrendsResponse, error) {
@@ -37,6 +39,8 @@ func GetSystemAllTrends() (*SystemAllTrendsResponse, error) {
 
 		Disks:  disks,
 		System: sysInfo,
+
+		Application: GetDockerContainerInfo(),
 
 		Timestamp: time.Now().UnixMilli(),
 	}, nil

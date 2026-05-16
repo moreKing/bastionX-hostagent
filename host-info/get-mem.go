@@ -101,8 +101,8 @@ func UpdateMemoryTrends() {
 	logger.Info("UpdateMemoryTrends", "Total:", memInfo.Total, "Used:", memInfo.Used, "Cache:", memInfo.Cache)
 
 	lastTenMinuteMemInfo.Total = memInfo.Total
-	lastTenMinuteMemInfo.Used.Add(uint64(memInfo.Used), true)
-	lastTenMinuteMemInfo.Cache.Add(uint64(memInfo.Cache), true)
+	lastTenMinuteMemInfo.Used.Add(uint64(memInfo.Used))
+	lastTenMinuteMemInfo.Cache.Add(uint64(memInfo.Cache))
 
 	logger.Debug(lastTenMinuteMemInfo)
 }

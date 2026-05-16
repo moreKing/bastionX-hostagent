@@ -23,6 +23,9 @@ func GetNetInfo() (*[]Network, error) {
 
 	var netList []Network
 	for _, line := range reNetInfo.FindAllStringSubmatch(string(output), -1) {
+		if strings.TrimSpace(line[1]) == "lo" {
+			continue
+		}
 		logger.Info("GetNetInfo", line)
 		rx, _ := strconv.ParseInt(strings.TrimSpace(line[2]), 10, 64)
 		tx, _ := strconv.ParseInt(strings.TrimSpace(line[3]), 10, 64)

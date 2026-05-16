@@ -106,8 +106,8 @@ func UpdateCpuInfoTrends() {
 	for _, v := range *cpuInfos {
 		if _, exists := lastTenMinuteCpuInfo[v.Index]; !exists {
 			lastTenMinuteCpuInfo[v.Index] = &CpuInfoTrends{
-				Total: CircularQueue{data: make([]uint64, 10)},
-				Idle:  CircularQueue{data: make([]uint64, 10)},
+				Total: *NewCircularQueue(10),
+				Idle:  *NewCircularQueue(10),
 			}
 		}
 

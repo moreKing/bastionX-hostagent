@@ -2,11 +2,21 @@ package hostinfo
 
 // 定义一个环形队列，方便对数组进行追加和覆盖
 type CircularQueue struct {
-	data      []uint64 // 固定长度数组
+	data      []uint64 // 数组
 	lastValue uint64   // 上一次添加的真实值，计算差值时使用
 	head      int      // 队首索引
 	next      int      // 下一个写入位置
 	count     int      // 当前元素个数
+}
+
+func NewCircularQueue(size int) *CircularQueue {
+	return &CircularQueue{
+		data:      make([]uint64, size),
+		lastValue: 0,
+		head:      0,
+		next:      0,
+		count:     0,
+	}
 }
 
 // Add 添加元素到队列
@@ -36,18 +46,21 @@ func (cq *CircularQueue) Add(value uint64, diffValue ...bool) {
 
 // GetAll 获取队列中所有元素，按照添加顺序返回 从最旧到最新
 func (cq *CircularQueue) GetAll() []uint64 {
+	size := len(cq.data)
+	result := make([]uint64, size) // 默认初始全是 0
 
-	// 空位用0填充
-	if cq.count < len(cq.data) {
-		for i := 0; i < (len(cq.data) - cq.count); i++ {
-			cq.data[i] = 0
-		}
+	if cq.count == 0 {
+		return result
 	}
 
-	result := make([]uint64, cq.count)
-	for i := (len(cq.data) - cq.count); i < len(cq.data); i++ {
-		index := (cq.head + i) % len(cq.data)
-		result[i] = cq.data[index]
+	// 计算从哪里开始填入非零数据
+	// 如果未满，右对齐（最新数据在最右侧，左边留 0）
+	startIndex := size - cq.count
+
+	curr := cq.head
+	for i := 0; i < cq.count; i++ {
+		result[startIndex+i] = cq.data[curr]
+		curr = (curr + 1) % size
 	}
 
 	return result

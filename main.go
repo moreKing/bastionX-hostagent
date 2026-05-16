@@ -5,22 +5,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"host-agent/conf"
+	"host-agent/cron"
 	hostinfo "host-agent/host-info"
+	"host-agent/logger"
 	"io"
 	"log"
 	"net"
 	"os"
 	"path"
+	"time"
 )
 
 func main() {
+
+	logger.Debug("启动定时器")
+
+	cron.GetCron().Add("get-network-info", 60*time.Second, hostinfo.UpdateNetInfoTrends, true)
+	cron.GetCron().Add("get-cpu-info", 60*time.Second, hostinfo.UpdateCpuInfoTrends, true)
+	cron.GetCron().Add("get-memory-info", 60*time.Second, hostinfo.UpdateMemoryTrends, true)
+
+	logger.Debug("定时器启动完成")
 
 	// 定义 socket 文件路径,
 	err := os.MkdirAll(path.Dir(conf.SOCKET_PATH), 0666)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("目录创建成功", path.Dir(conf.SOCKET_PATH))
+	// fmt.Println("目录创建成功", path.Dir(conf.SOCKET_PATH))
+	logger.Info("目录创建成功", path.Dir(conf.SOCKET_PATH))
 	// 移除已存在的 socket 文件
 	os.Remove(conf.SOCKET_PATH)
 	// 创建 Unix 地址
@@ -46,18 +58,18 @@ func main() {
 	// 设置 socket 文件权限
 	os.Chmod(conf.SOCKET_PATH, 0666)
 
-	fmt.Println("Unix Socket 服务器启动，监听:", conf.SOCKET_PATH)
+	logger.Info("Unix Socket 服务器启动，监听:", conf.SOCKET_PATH)
 
 	for {
 		// 接收消息（会返回发送方地址）
 		conn, err := lis.Accept()
 		if err != nil {
-			log.Println("accept:", err)
+			logger.Error("accept:", err)
 			continue
 		}
 		// n, clientAddr, err := conn.ReadFromUnix(buffer)
 		// if err != nil {
-		// 	fmt.Println("接收消息失败:", err)
+		// 	logger.Error("接收消息失败:", err)
 		// 	continue
 		// }
 
@@ -110,37 +122,39 @@ func reqUnixHandle(conn net.Conn) {
 		// 发送响应给特定客户端
 		resBytes, err := json.Marshal(&response)
 		if err != nil {
-			fmt.Println(err)
+			logger.Error("响应数据json序列化错误: %v\n", err)
 			return
 		}
 
-		fmt.Println("返回信息： ", string(resBytes))
+		logger.Debug("返回信息： ", string(resBytes))
 
 		// 加密返回
 		ciphertext, err := conf.EncryptAESGCM(resBytes)
 		if err != nil {
-			fmt.Println(string(resBytes))
-			fmt.Println("加密返回信息失败:", err)
+			logger.Error("加密返回信息失败: %v", err)
 			return
 		}
 
 		if err := sendMsg(conn, ciphertext); err != nil {
-			fmt.Println("发送响应失败:", err)
+			logger.Error("发送响应失败:", err)
+			return
 		}
 	}()
 
 	plaintext, err := conf.DecryptAESGCM(reqBytes)
 	if err != nil {
 		response.Message = "非法的请求内容：" + err.Error()
+		logger.Error("解密请求内容失败: %v", err.Error())
 		return
 	}
 
-	fmt.Printf("收到消息: %s\n", string(plaintext))
+	// fmt.Printf("收到消息: %s\n", string(plaintext))
+	logger.Debug("收到消息: ", string(plaintext))
 
 	var req conf.Request
 	if err := json.Unmarshal(plaintext, &req); err != nil {
 		response.Message = err.Error()
-		fmt.Printf("请求数据json解析错误: %v\n", err)
+		logger.Error("请求数据json解析错误: %v\n", err)
 		return
 	}
 
@@ -158,14 +172,14 @@ func reqUnixHandle(conn net.Conn) {
 			return
 		}
 
-		fmt.Println(string(resBytes))
+		logger.Debug("返回信息: ", string(resBytes))
 
 		response.Status = 0
 		response.Data = resBytes
 		return
 
-	case "get-cpu":
-		datas, err := hostinfo.GetCPU()
+	case "get-system-trends":
+		datas, err := hostinfo.GetSystemAllTrends()
 		if err != nil {
 			response.Message = err.Error()
 			return
@@ -176,90 +190,12 @@ func reqUnixHandle(conn net.Conn) {
 			response.Message = err.Error()
 			return
 		}
-
-		fmt.Println(string(resBytes))
-
+		logger.Debug("返回信息: ", string(resBytes))
 		response.Status = 0
 		response.Data = resBytes
-		return
 
-	case "get-net":
-		datas, err := hostinfo.GetNetInfo()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		resBytes, err := json.Marshal(datas)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		fmt.Println(string(resBytes))
-
-		response.Status = 0
-		response.Data = resBytes
-		return
-
-	case "get-disk":
-		datas, err := hostinfo.GetDisk()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		resBytes, err := json.Marshal(datas)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		fmt.Println(string(resBytes))
-
-		response.Status = 0
-		response.Data = resBytes
-		return
-
-	case "get-host":
-		datas, err := hostinfo.GetHost()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		resBytes, err := json.Marshal(datas)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		fmt.Println(string(resBytes))
-
-		response.Status = 0
-		response.Data = resBytes
-		return
-
-	case "get-mem":
-		datas, err := hostinfo.GetMemory()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		resBytes, err := json.Marshal(datas)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		fmt.Println(string(resBytes))
-
-		response.Status = 0
-		response.Data = resBytes
-		return
 	default:
-
+		response.Message = "未知的请求路径"
 	}
 
 }

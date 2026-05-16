@@ -2,6 +2,7 @@ package hostinfo
 
 import (
 	"fmt"
+	"host-agent/logger"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -70,4 +71,52 @@ func GetMemory() (*Memory, error) {
 	}
 
 	return &memInfo, nil
+}
+
+type PhysicalMemory struct {
+	Total int64         `json:"total"`
+	Used  CircularQueue `json:"used"`
+	Cache CircularQueue `json:"cache"`
+}
+
+var lastTenMinuteMemInfo = PhysicalMemory{
+	Used:  CircularQueue{data: make([]uint64, 10)},
+	Cache: CircularQueue{data: make([]uint64, 10)},
+}
+
+// 每1分钟获取一次内存信息
+func UpdateMemoryTrends() {
+	memInfo, err := GetMemory()
+	if err != nil {
+		logger.Error("获取内存数据失败： ", err)
+		return
+	}
+
+	if memInfo.Used > 0 && memInfo.Cache > 0 {
+		logger.Info("内存使用率 ", fmt.Sprintf(" %.2f %%", float64(memInfo.Used)/float64(memInfo.Total)*100))
+	} else {
+		logger.Error("内存使用率计算失败", fmt.Sprintf("Used: %d, Cache: %d", memInfo.Used, memInfo.Cache))
+	}
+
+	logger.Info("UpdateMemoryTrends", "Total:", memInfo.Total, "Used:", memInfo.Used, "Cache:", memInfo.Cache)
+
+	lastTenMinuteMemInfo.Total = memInfo.Total
+	lastTenMinuteMemInfo.Used.Add(uint64(memInfo.Used), true)
+	lastTenMinuteMemInfo.Cache.Add(uint64(memInfo.Cache), true)
+
+	logger.Debug(lastTenMinuteMemInfo)
+}
+
+type MemoryTrendsResponse struct {
+	Total int64    `json:"total"`
+	Used  []uint64 `json:"used"`
+	Cache []uint64 `json:"cache"`
+}
+
+func GetMemoryTrends() *MemoryTrendsResponse {
+	return &MemoryTrendsResponse{
+		Total: lastTenMinuteMemInfo.Total,
+		Used:  lastTenMinuteMemInfo.Used.GetAll(),
+		Cache: lastTenMinuteMemInfo.Cache.GetAll(),
+	}
 }

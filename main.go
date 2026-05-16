@@ -23,6 +23,7 @@ func main() {
 	cron.GetCron().Add("get-network-info", 60*time.Second, hostinfo.UpdateNetInfoTrends, true)
 	cron.GetCron().Add("get-cpu-info", 60*time.Second, hostinfo.UpdateCpuInfoTrends, true)
 	cron.GetCron().Add("get-memory-info", 60*time.Second, hostinfo.UpdateMemoryTrends, true)
+	cron.GetCron().Add("get-docker-container-info", 60*time.Second, hostinfo.GetDockerContainerInfo, true)
 
 	logger.Debug("定时器启动完成")
 

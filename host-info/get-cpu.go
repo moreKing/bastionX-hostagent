@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"host-agent/logger"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -151,5 +152,14 @@ func GetCpuUsageTrends() *[]CpuInfoTrendsResponse {
 		}
 		response = append(response, resp)
 	}
+
+	// 根据cpu index排序
+	sort.Slice(response, func(i, j int) bool {
+		// 提取数字并转为 int 比较
+		numI, _ := strconv.Atoi(response[i].Index[3:])
+		numJ, _ := strconv.Atoi(response[j].Index[3:])
+		return numI < numJ
+	})
+
 	return &response
 }

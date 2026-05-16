@@ -2,7 +2,9 @@ package hostinfo
 
 import (
 	"host-agent/logger"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,6 +28,15 @@ func GetNetInfo() (*[]Network, error) {
 		if strings.TrimSpace(line[1]) == "lo" {
 			continue
 		}
+
+		// 判断是否是物理网卡 非物理网卡不统计
+		// 判断是否物理接口
+		device := filepath.Join("/sys/class/net", line[1], "device")
+		if _, err := os.Stat(device); err != nil {
+			logger.Debug(line[1], " 非物理网卡，跳过统计")
+			continue
+		}
+
 		logger.Info("GetNetInfo", line)
 		rx, _ := strconv.ParseInt(strings.TrimSpace(line[2]), 10, 64)
 		tx, _ := strconv.ParseInt(strings.TrimSpace(line[3]), 10, 64)

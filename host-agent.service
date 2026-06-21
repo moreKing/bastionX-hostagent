@@ -1,0 +1,20 @@
+[Unit]
+Description=bastionx host agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/log/bastionx/agent
+ExecStart=/usr/local/bin/host-agent
+
+# 1. 开启基础重启机制
+Restart=on-failure
+RestartSec=5s
+
+# 2. 设置最大重启次数限制（核心部分）
+StartLimitIntervalSec=30s
+StartLimitBurst=3
+
+[Install]
+WantedBy=multi-user.target

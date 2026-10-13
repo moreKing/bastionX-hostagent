@@ -1,21 +1,30 @@
 package main
 
 import (
-	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"host-agent/conf"
 	"host-agent/cron"
 	hostinfo "host-agent/host-info"
 	"host-agent/logger"
-	"io"
-	"net"
-	"os"
-	"path"
+	"net/http"
 	"time"
 )
 
 func main() {
+
+	port := flag.Int("port", conf.DEFAULT_PORT, "HTTP 服务监听端口")
+	logPath := flag.String("log-path", logger.DefaultLogPath, "日志输出目录")
+	logLevel := flag.String("log-level", "info", "日志级别：debug/info/warn/error")
+	flag.Parse()
+
+	level, err := logger.ParseLevel(*logLevel)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	logger.Init(*logPath, level)
 
 	logger.Debug("启动定时器")
 
@@ -26,177 +35,83 @@ func main() {
 
 	logger.Debug("定时器启动完成")
 
-	// 定义 socket 文件路径,
-	err := os.MkdirAll(path.Dir(conf.SOCKET_PATH), 0777)
-	if err != nil {
+	http.HandleFunc("/get-system-info", requireGet(getSystemInfo))
+	http.HandleFunc("/get-system-trends", requireGet(getSystemTrends))
+
+	addr := fmt.Sprintf(":%d", *port)
+	logger.Info("HTTP 服务启动，监听:", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		logger.Error("HTTP 服务启动失败:", err)
 		panic(err)
 	}
-	// fmt.Println("目录创建成功", path.Dir(conf.SOCKET_PATH))
-	logger.Info("目录创建成功", path.Dir(conf.SOCKET_PATH))
-	// 移除已存在的 socket 文件
-	os.Remove(conf.SOCKET_PATH)
-	// 创建 Unix 地址
-
-	// addr, err := net.ResolveUnixAddr("unixgram", conf.SOCKET_PATH)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// // 创建监听连接
-	// conn, err := net.ListenUnixgram("unixgram", addr)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer conn.Close()
-
-	lis, err := net.Listen("unix", conf.SOCKET_PATH)
-	if err != nil {
-		logger.Error("监听 Unix Socket 失败:", err)
-		panic("监听 Unix Socket 失败: " + err.Error())
-	}
-	defer lis.Close()
-
-	// 设置 socket 文件权限
-	os.Chmod(conf.SOCKET_PATH, 0666)
-
-	logger.Info("Unix Socket 服务器启动，监听:", conf.SOCKET_PATH)
-
-	for {
-		// 接收消息（会返回发送方地址）
-		conn, err := lis.Accept()
-		if err != nil {
-			logger.Error("accept:", err)
-			continue
-		}
-		// n, clientAddr, err := conn.ReadFromUnix(buffer)
-		// if err != nil {
-		// 	logger.Error("接收消息失败:", err)
-		// 	continue
-		// }
-
-		go reqUnixHandle(conn)
-
-	}
-
 }
 
-func sendMsg(w io.Writer, data []byte) error {
-	var lenBuf [4]byte
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
-	if _, err := w.Write(lenBuf[:]); err != nil {
-		return err
+// requireGet 限制接口仅支持 GET 请求
+func requireGet(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeResponse(w, conf.Response{
+				Status:  -1,
+				Message: "仅支持 GET 请求",
+			})
+			return
+		}
+		handler(w, r)
 	}
-	_, err := w.Write(data)
-	return err
 }
 
-func recvMsg(r io.Reader) ([]byte, error) {
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
-		return nil, err
+func getSystemInfo(w http.ResponseWriter, r *http.Request) {
+	sysInfo, err := hostinfo.GetSystemInfo()
+	if err != nil {
+		writeResponse(w, conf.Response{Status: -1, Message: err.Error()})
+		return
 	}
-	l := binary.BigEndian.Uint32(lenBuf[:])
-	if l > 64*1024*1024 { // 可自定义最大帧长
-		return nil, fmt.Errorf("frame too large: %d", l)
+
+	resBytes, err := json.Marshal(sysInfo)
+	if err != nil {
+		writeResponse(w, conf.Response{Status: -1, Message: err.Error()})
+		return
 	}
-	data := make([]byte, l)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
-	}
-	return data, nil
+
+	logger.Debug("返回信息: ", string(resBytes))
+	writeResponse(w, conf.Response{Status: 0, Data: resBytes})
 }
 
-func reqUnixHandle(conn net.Conn) {
-
-	reqBytes, err := recvMsg(conn)
+func getSystemTrends(w http.ResponseWriter, r *http.Request) {
+	datas, err := hostinfo.GetSystemAllTrends()
 	if err != nil {
+		writeResponse(w, conf.Response{Status: -1, Message: err.Error()})
 		return
 	}
 
-	var response = conf.Response{
-		Status:  -1,
-		Message: "",
-		Data:    nil,
-	}
-
-	defer func() {
-		// 发送响应给特定客户端
-		resBytes, err := json.Marshal(&response)
-		if err != nil {
-			logger.Error("响应数据json序列化错误: %v\n", err)
-			return
-		}
-
-		logger.Debug("返回信息： ", string(resBytes))
-
-		// 加密返回
-		ciphertext, err := conf.EncryptAESGCM(resBytes)
-		if err != nil {
-			logger.Error("加密返回信息失败: %v", err)
-			return
-		}
-
-		if err := sendMsg(conn, ciphertext); err != nil {
-			logger.Error("发送响应失败:", err)
-			return
-		}
-	}()
-
-	plaintext, err := conf.DecryptAESGCM(reqBytes)
+	resBytes, err := json.Marshal(datas)
 	if err != nil {
-		response.Message = "非法的请求内容：" + err.Error()
-		logger.Error("解密请求内容失败: %v", err.Error())
+		writeResponse(w, conf.Response{Status: -1, Message: err.Error()})
 		return
 	}
 
-	// fmt.Printf("收到消息: %s\n", string(plaintext))
-	logger.Debug("收到消息: ", string(plaintext))
+	logger.Debug("返回信息: ", string(resBytes))
+	writeResponse(w, conf.Response{Status: 0, Data: resBytes})
+}
 
-	var req conf.Request
-	if err := json.Unmarshal(plaintext, &req); err != nil {
-		response.Message = err.Error()
-		logger.Error("请求数据json解析错误: %v\n", err)
+// writeResponse 响应体为 Response 序列化后经 AES-GCM 加密的密文
+func writeResponse(w http.ResponseWriter, response conf.Response) {
+	resBytes, err := json.Marshal(&response)
+	if err != nil {
+		logger.Error("响应数据json序列化错误: ", err)
 		return
 	}
 
-	switch req.Path {
-	case "get-system-info":
-		sysInfo, err := hostinfo.GetSystemInfo()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
+	logger.Debug("返回信息： ", string(resBytes))
 
-		resBytes, err := json.Marshal(sysInfo)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		logger.Debug("返回信息: ", string(resBytes))
-
-		response.Status = 0
-		response.Data = resBytes
+	ciphertext, err := conf.EncryptAESGCM(resBytes)
+	if err != nil {
+		logger.Error("加密返回信息失败: ", err)
 		return
-
-	case "get-system-trends":
-		datas, err := hostinfo.GetSystemAllTrends()
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-
-		resBytes, err := json.Marshal(datas)
-		if err != nil {
-			response.Message = err.Error()
-			return
-		}
-		logger.Debug("返回信息: ", string(resBytes))
-		response.Status = 0
-		response.Data = resBytes
-
-	default:
-		response.Message = "未知的请求路径"
 	}
 
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if _, err := w.Write(ciphertext); err != nil {
+		logger.Error("发送响应失败: ", err)
+	}
 }

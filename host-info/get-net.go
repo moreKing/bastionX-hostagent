@@ -3,50 +3,62 @@ package hostinfo
 import (
 	"host-agent/logger"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
-)
+	"sort"
 
-var reNetInfo = regexp.MustCompile(`(?m)^([^:\s]+):\s+(\d+)\s+(\d+)`)
+	"github.com/shirou/gopsutil/v4/net"
+)
 
 // GetNetInfo 获取网络信息
 func GetNetInfo() (*[]Network, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		logger.Error("GetNetInfo", err)
+		return nil, err
+	}
 
-	// 获取网络信息
-	//	output, err := session.Output(`awk 'NR>2 {print $1, $2, $10}' /proc/net/dev`)
-	output, err := exec.Command("awk", "NR>2 {print $1, $2, $10}", "/proc/net/dev").Output()
+	physicalNames := make(map[string]struct{})
+	for _, iface := range ifaces {
+		if iface.Name == "" || iface.Name == "lo" {
+			continue
+		}
+
+		// 判断是否物理网卡
+		devicePath := filepath.Join("/sys/class/net", iface.Name, "device")
+		if _, statErr := os.Stat(devicePath); statErr != nil {
+			logger.Debug(iface.Name, " 非物理网卡，跳过统计")
+			continue
+		}
+
+		physicalNames[iface.Name] = struct{}{}
+	}
+
+	if len(physicalNames) == 0 {
+		return &[]Network{}, nil
+	}
+
+	ioCounters, err := net.IOCounters(true)
 	if err != nil {
 		logger.Error("GetNetInfo", err)
 		return nil, err
 	}
 
 	var netList []Network
-	for _, line := range reNetInfo.FindAllStringSubmatch(string(output), -1) {
-		if strings.TrimSpace(line[1]) == "lo" {
+	for _, counter := range ioCounters {
+		if _, ok := physicalNames[counter.Name]; !ok {
 			continue
 		}
 
-		// 判断是否是物理网卡 非物理网卡不统计
-		// 判断是否物理接口
-		device := filepath.Join("/sys/class/net", line[1], "device")
-		if _, err := os.Stat(device); err != nil {
-			logger.Debug(line[1], " 非物理网卡，跳过统计")
-			continue
-		}
-
-		logger.Info("GetNetInfo", line)
-		rx, _ := strconv.ParseInt(strings.TrimSpace(line[2]), 10, 64)
-		tx, _ := strconv.ParseInt(strings.TrimSpace(line[3]), 10, 64)
-
+		logger.Info("GetNetInfo", counter.Name, "Receive:", counter.BytesRecv, "Transmit:", counter.BytesSent)
 		netList = append(netList, Network{
-			Name:     line[1],
-			Receive:  rx,
-			Transmit: tx,
+			Name:     counter.Name,
+			Receive:  int64(counter.BytesRecv),
+			Transmit: int64(counter.BytesSent),
 		})
 	}
+
+	// 按名称排序，保持输出稳定
+	sort.Slice(netList, func(i, j int) bool { return netList[i].Name < netList[j].Name })
 
 	return &netList, nil
 }

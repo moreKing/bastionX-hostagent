@@ -2,30 +2,31 @@ package hostinfo
 
 import (
 	"fmt"
-	"os/exec"
-	"regexp"
-	"strconv"
+
+	"github.com/shirou/gopsutil/v4/disk"
 )
 
-var reGetDiskInfo = regexp.MustCompile(`(?m)^(.+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(.+)$`)
-
 func GetDisk() (*[]Disk, error) {
-	output, err := exec.Command("df", "-k").Output()
+	partitions, err := disk.Partitions(false)
 	if err != nil {
 		fmt.Println("GetDiskInfo", err)
 		return nil, err
 	}
+
 	var diskList []Disk
-	for _, m := range reGetDiskInfo.FindAllStringSubmatch(string(output), -1) {
-		size, _ := strconv.ParseInt(m[2], 10, 64)
-		used, _ := strconv.ParseInt(m[3], 10, 64)
-		avail, _ := strconv.ParseInt(m[4], 10, 64)
+	for _, p := range partitions {
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil {
+			fmt.Println("GetDiskInfo", p.Mountpoint, err)
+			continue
+		}
+
 		diskList = append(diskList, Disk{
-			Total:      size,
-			Used:       used,
-			Free:       avail,
-			FileSystem: m[1],
-			MountPoint: m[6],
+			Total:      int64(usage.Total / 1024),
+			Used:       int64(usage.Used / 1024),
+			Free:       int64(usage.Free / 1024),
+			FileSystem: p.Fstype,
+			MountPoint: p.Mountpoint,
 		})
 	}
 

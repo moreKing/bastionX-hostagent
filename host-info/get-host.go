@@ -1,6 +1,6 @@
 package hostinfo
 
-import "github.com/shirou/gopsutil/v3/host"
+import "github.com/shirou/gopsutil/v4/host"
 
 func GetHost() (*DataOverview, error) {
 

@@ -4,14 +4,12 @@ import (
 	"fmt"
 	stdnet "net"
 	"os"
-	"os/exec"
 	"path/filepath"
-
 	"strings"
 
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/net"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/host"
+	"github.com/shirou/gopsutil/v4/net"
 )
 
 type Ethernet struct {
@@ -46,14 +44,13 @@ type SystemInfo struct {
 	CpuMHz       int64  `json:"cpuMHz"`       // cpu主频
 }
 
-// execute command and return output
-func getCommandOutput(command string, args ...string) (string, error) {
-	cmd := exec.Command(command, args...)
-	output, err := cmd.Output()
+// readFileTrimmed 读取文件内容并去掉首尾空白
+func readFileTrimmed(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return ""
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(string(data))
 }
 
 func GetSystemInfo() (*SystemInfo, error) {
@@ -72,18 +69,17 @@ func GetSystemInfo() (*SystemInfo, error) {
 		Ethernets:  []Ethernet{},
 	}
 
+	// CPU 信息
 	cpuInfo, err := cpu.Info()
 	if err != nil {
 		fmt.Println("cpuInfo err:", err)
 		return nil, err
 	}
-
 	cpuCores, err := cpu.Counts(true)
 	if err != nil {
 		fmt.Println("cpuCores err:", err)
 		return nil, err
 	}
-
 	if len(cpuInfo) > 0 {
 		systemInfo.CpuModelName = cpuInfo[0].ModelName
 		systemInfo.CpuCores = int(cpuCores)
@@ -91,38 +87,34 @@ func GetSystemInfo() (*SystemInfo, error) {
 		systemInfo.CpuMHz = int64(cpuInfo[0].Mhz)
 	}
 
-	// Get board info
-	systemInfo.BoardSerialNumber, _ = getCommandOutput("cat", "/sys/class/dmi/id/board_serial")
-	systemInfo.BoardName, _ = getCommandOutput("cat", "/sys/class/dmi/id/board_name")
-	systemInfo.BoardVendor, _ = getCommandOutput("cat", "/sys/class/dmi/id/board_vendor")
-	systemInfo.ProductUUID, _ = getCommandOutput("cat", "/sys/class/dmi/id/product_uuid")
-
-	systemInfo.ProductName, _ = getCommandOutput("cat", "/sys/class/dmi/id/product_name")
-
-	// 获取指定文件夹的创建时间
-	bootCreateTime, err := getCommandOutput("stat", "-c", "%W", "/boot")
-	if err != nil {
-		fmt.Println("bootCreateTime err:", err)
+	// 平台差异：board/product/create time（由 _linux.go / _darwin.go 实现）
+	if err := applyPlatformSystemExtras(systemInfo); err != nil {
 		return nil, err
 	}
-	systemInfo.SystemCreateTime = bootCreateTime
 
-	interfaces, err := net.Interfaces()
+	// 网络接口
+	systemInfo.Ethernets = collectEthernets()
+
+	return systemInfo, nil
+}
+
+// collectEthernets 收集物理网卡信息
+func collectEthernets() []Ethernet {
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		fmt.Println("interfaces err:", err)
-		return nil, err
+		return []Ethernet{}
 	}
 
-	for _, iface := range interfaces {
-
-		if iface.Name == "lo" {
+	var ethernets []Ethernet
+	for _, iface := range ifaces {
+		if iface.Name == "lo" || iface.Name == "" {
 			continue
 		}
 
-		// 判断是否物理接口
+		// 判断是否物理接口（仅 Linux 有效，macOS 会跳过）
 		device := filepath.Join("/sys/class/net", iface.Name, "device")
 		if _, err := os.Stat(device); err != nil {
-			fmt.Println(device, "地址不存在")
 			continue
 		}
 
@@ -133,22 +125,21 @@ func GetSystemInfo() (*SystemInfo, error) {
 			IPv6: []string{},
 		}
 
-		if iface.HardwareAddr != "" {
-			ethernet.Mac = iface.HardwareAddr
-		}
 		for _, addr := range iface.Addrs {
 			ipStr := strings.Split(addr.Addr, "/")[0]
 			ip := stdnet.ParseIP(ipStr)
-			if ip != nil && !ip.IsLoopback() {
-				if ip.To4() != nil {
-					ethernet.IPv4 = append(ethernet.IPv4, ip.String())
-				} else if ip.To16() != nil {
-					ethernet.IPv6 = append(ethernet.IPv6, ip.String())
-				}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			if ip.To4() != nil {
+				ethernet.IPv4 = append(ethernet.IPv4, ip.String())
+			} else if ip.To16() != nil {
+				ethernet.IPv6 = append(ethernet.IPv6, ip.String())
 			}
 		}
-		systemInfo.Ethernets = append(systemInfo.Ethernets, ethernet)
+
+		ethernets = append(ethernets, ethernet)
 	}
 
-	return systemInfo, nil
+	return ethernets
 }

@@ -1,6 +1,6 @@
 package conf
 
-var SOCKET_PATH = "/run/host-agent/agent.sock"
+var SOCKET_PATH = "/var/host-agent/agent.sock"
 
 var SOCKET_KEY = []byte("BastionX!@#qwe12")
 

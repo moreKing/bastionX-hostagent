@@ -9,7 +9,6 @@ import (
 	hostinfo "host-agent/host-info"
 	"host-agent/logger"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path"
@@ -28,7 +27,7 @@ func main() {
 	logger.Debug("定时器启动完成")
 
 	// 定义 socket 文件路径,
-	err := os.MkdirAll(path.Dir(conf.SOCKET_PATH), 0666)
+	err := os.MkdirAll(path.Dir(conf.SOCKET_PATH), 0777)
 	if err != nil {
 		panic(err)
 	}
@@ -52,7 +51,8 @@ func main() {
 
 	lis, err := net.Listen("unix", conf.SOCKET_PATH)
 	if err != nil {
-		log.Fatal("listen:", err)
+		logger.Error("监听 Unix Socket 失败:", err)
+		panic("监听 Unix Socket 失败: " + err.Error())
 	}
 	defer lis.Close()
 

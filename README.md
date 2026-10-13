@@ -8,3 +8,8 @@ sudo systemctl daemon-reload
 sudo systemctl start host-agent.service
 
 sudo systemctl enable --now host-agent.service
+
+
+# 构建
+
+docker build --output type=local,dest=./dist .

@@ -1,0 +1,8 @@
+.git
+.gitignore
+host-agent
+dist/
+*.service
+README.md
+Dockerfile
+.dockerignore

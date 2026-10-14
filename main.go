@@ -59,9 +59,28 @@ func main() {
 
 	addr := net.JoinHostPort(gateway, fmt.Sprintf("%d", *port))
 	logger.Info("HTTP 服务启动，监听:", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		logger.Error("HTTP 服务启动失败: ", err)
-		panic(err)
+
+	server := &http.Server{Addr: addr, Handler: nil}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+
+	// 等待退出信号或服务启动失败；signal.NotifyContext 已接管 SIGINT/SIGTERM，
+	// 必须在此处消费 ctx.Done()，否则信号会被吞掉导致进程无法停止
+	select {
+	case <-ctx.Done():
+		logger.Info("收到退出信号，开始关闭服务")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Error("服务关闭失败: ", err)
+		}
+		logger.Info("服务已停止")
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP 服务启动失败: ", err)
+		}
 	}
 }
 

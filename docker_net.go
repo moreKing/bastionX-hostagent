@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"host-agent/logger"
+	"strings"
 	"time"
 
 	"github.com/moby/moby/client"
@@ -36,16 +37,24 @@ func lookupNetworkGateway(ctx context.Context, networkName string) (string, erro
 	}
 	defer cli.Close()
 
-	res, err := cli.NetworkInspect(ctx, networkName, client.NetworkInspectOptions{})
+	// compose 创建的网络名会带项目名前缀，如 055_bastionx-net，故列出后按名称匹配
+	res, err := cli.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
-		return "", fmt.Errorf("获取网络信息失败: %w", err)
+		return "", fmt.Errorf("获取网络列表失败: %w", err)
 	}
 
-	for _, c := range res.Network.IPAM.Config {
-		if c.Gateway.IsValid() {
-			return c.Gateway.String(), nil
+	for _, n := range res.Items {
+		if n.Name != networkName && !strings.HasSuffix(n.Name, "_"+networkName) {
+			continue
+		}
+
+		for _, c := range n.IPAM.Config {
+			if c.Gateway.IsValid() {
+				logger.Debug("匹配到 docker 网络: ", n.Name, " 网关: ", c.Gateway.String())
+				return c.Gateway.String(), nil
+			}
 		}
 	}
 
-	return "", fmt.Errorf("网络 %s 尚未分配网关地址", networkName)
+	return "", fmt.Errorf("未找到网络 %s 或尚未分配网关地址", networkName)
 }

@@ -53,7 +53,7 @@ func main() {
 	gateway, err := waitForNetworkGateway(ctx, *networkName)
 	if err != nil {
 		logger.Error("等待 docker 网络失败: ", err)
-		panic(err)
+		return
 	}
 	logger.Info("获取到网络网关: ", *networkName, " -> ", gateway)
 

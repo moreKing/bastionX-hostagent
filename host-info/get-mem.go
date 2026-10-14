@@ -60,7 +60,7 @@ func UpdateMemoryTrends() {
 		return
 	}
 
-	if memInfo.Used > 0 && memInfo.Cache > 0 {
+	if memInfo.Used > 0 {
 		logger.Info("内存使用率 ", fmt.Sprintf(" %.2f %%", float64(memInfo.Used)/float64(memInfo.Total)*100))
 	} else {
 		logger.Error("内存使用率计算失败", fmt.Sprintf("Used: %d, Cache: %d", memInfo.Used, memInfo.Cache))

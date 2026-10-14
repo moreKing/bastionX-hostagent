@@ -6,10 +6,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 )
+
+var projectRoot string
+
+func init() {
+	if cwd, err := os.Getwd(); err == nil {
+		projectRoot = cwd
+	}
+}
 
 func createOptions(lever *slog.LevelVar, addSource bool) *slog.HandlerOptions {
 	// 设置目标时区（例如：Asia/Shanghai）
@@ -73,7 +83,13 @@ func (h *CustomHandler) Handle(ctx context.Context, r slog.Record) error {
 		}
 
 		frame, _ := frames.Next()
-		fileLine = fmt.Sprintf("%s:%d", frame.File, frame.Line)
+		relPath := frame.File
+		if projectRoot != "" {
+			if rel, err := filepath.Rel(projectRoot, frame.File); err == nil {
+				relPath = rel
+			}
+		}
+		fileLine = fmt.Sprintf("%s:%d", relPath, frame.Line)
 	}
 
 	// 格式化日志字符串

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,15 +9,22 @@ import (
 	"host-agent/cron"
 	hostinfo "host-agent/host-info"
 	"host-agent/logger"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
+
+const defaultNetworkName = "bastionx-net"
 
 func main() {
 
 	port := flag.Int("port", conf.DEFAULT_PORT, "HTTP 服务监听端口")
 	logPath := flag.String("log-path", logger.DefaultLogPath, "日志输出目录")
 	logLevel := flag.String("log-level", "info", "日志级别：debug/info/warn/error")
+	networkName := flag.String("network", defaultNetworkName, "docker compose 自定义网络名称，监听其网关地址")
 	flag.Parse()
 
 	level, err := logger.ParseLevel(*logLevel)
@@ -38,10 +46,21 @@ func main() {
 	http.HandleFunc("/get-system-info", requireGet(getSystemInfo))
 	http.HandleFunc("/get-system-trends", requireGet(getSystemTrends))
 
-	addr := fmt.Sprintf(":%d", *port)
+	// 等待 docker compose 创建自定义网络，监听网关地址，使容器内可访问本服务
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	gateway, err := waitForNetworkGateway(ctx, *networkName)
+	if err != nil {
+		logger.Error("等待 docker 网络失败: ", err)
+		panic(err)
+	}
+	logger.Info("获取到网络网关: ", *networkName, " -> ", gateway)
+
+	addr := net.JoinHostPort(gateway, fmt.Sprintf("%d", *port))
 	logger.Info("HTTP 服务启动，监听:", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		logger.Error("HTTP 服务启动失败:", err)
+		logger.Error("HTTP 服务启动失败: ", err)
 		panic(err)
 	}
 }

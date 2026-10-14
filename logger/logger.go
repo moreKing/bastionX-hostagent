@@ -19,7 +19,7 @@ var serverLogger *slog.Logger
 var rotateLog io.Closer
 
 // DefaultLogPath 默认日志目录
-const DefaultLogPath = "/var/log/bastionx/agent"
+const DefaultLogPath = "/var/bastionx/agent"
 
 func init() {
 	// 解析启动参数前先用仅输出到 stdout 的默认配置，

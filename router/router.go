@@ -11,7 +11,7 @@ func New() *gin.Engine {
 
 	r.GET("/get-system-info", getSystemInfo)
 	r.GET("/get-system-trends", getSystemTrends)
-	r.POST("/restart/containter/:name", restartContainer)
+	r.POST("/restart/container/:name", restartContainer)
 
 	return r
 }
